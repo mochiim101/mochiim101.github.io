@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>VR Menu Concept</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#0b0f1e;--fg:#e8ecff;--ac:#7c8cff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0f1e;--fg:#e8ecff}}
+:root[data-theme="dark"]{--bg:#0b0f1e;--fg:#e8ecff}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif}
+canvas{display:block}
+#ui{position:fixed;left:0;right:0;bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+#enter{pointer-events:auto;background:var(--ac);color:#0b0f1e;border:0;border-radius:999px;padding:14px 34px;font-size:18px;font-weight:700}
+#enter:disabled{opacity:.6}
+#note{font-size:13px;opacity:.75;text-align:center;max-width:90vw}
+</style></head><body>
+<div id="ui"><button id="enter">Enter VR</button><div id="note">Open this page in the Quest 3 browser. On desktop, use the mouse to preview the menu.</div></div>
+<script>addEventListener('error',function(e){var n=document.getElementById('note');if(n)n.textContent='Error: '+(e.message||('could not load '+(e.target&&e.target.src)));},true);</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const S={bright:1,theme:0,opac:.95,size:1,dist:1.1,master:.7,ui:true,hap:true,hapStr:.6,turn:0,snap:1,vig:true,hand:0,hints:true,tab:0};
+const DEF=Object.assign({},S), SN=[30,45,90];
+const TH=[{n:'Dusk',bg:0x0d1024,a:'#7c8cff',e:0x3548ff},{n:'Void',bg:0x020204,a:'#4df0c0',e:0x10c090},{n:'Day',bg:0x9cc6ec,a:'#ff7a59',e:0xff6a40}];
+const tabs=[['Home','\u2302'],['Display','\u2600'],['Audio','\u266A'],['Comfort','\u25CE'],['Controls','\u2318']];
+const pc=v=>Math.round(v*100)+'%';
+const rows={
+1:[{t:'slider',l:'Brightness',k:'bright',a:.2,b:1.5,f:pc,h:'Scene light level'},
+ {t:'seg',l:'World theme',k:'theme',o:['Dusk','Void','Day'],h:'Changes the world and the menu accent'},
+ {t:'slider',l:'Panel opacity',k:'opac',a:.5,b:1,f:pc,h:'How see-through the menu is'},
+ {t:'slider',l:'Panel size',k:'size',a:.7,b:1.4,f:pc,h:'Scale the menu to your comfort'},
+ {t:'slider',l:'Panel distance',k:'dist',a:.6,b:1.8,f:v=>v.toFixed(2)+' m',h:'Applies the next time you recenter'}],
+2:[{t:'slider',l:'Master volume',k:'master',a:0,b:1,f:pc,h:'Volume of menu sounds'},
+ {t:'toggle',l:'Menu sounds',k:'ui',h:'Tick and click feedback'},
+ {t:'toggle',l:'Haptics',k:'hap',h:'Controller vibration on hover and select'},
+ {t:'slider',l:'Haptic strength',k:'hapStr',a:.1,b:1,f:pc,h:'Strength of controller vibration'}],
+3:[{t:'seg',l:'Turn mode',k:'turn',o:['Snap','Smooth'],h:'Right thumbstick turning style'},
+ {t:'seg',l:'Snap angle',k:'snap',o:['30\u00B0','45\u00B0','90\u00B0'],h:'Degrees per snap turn'},
+ {t:'toggle',l:'Comfort vignette',k:'vig',h:'Darkens edges while turning to reduce motion sickness'},
+ {t:'seg',l:'Laser hand',k:'hand',o:['Both','Right','Left'],h:'Which controller shows the pointer'}],
+4:[{t:'info',l:'Trigger',v:'Select \u00B7 drag sliders'},{t:'info',l:'Grip',v:'Hold to grab and move panel'},
+ {t:'info',l:'Y / X buttons',v:'Hide\u2013show / recenter'},{t:'info',l:'Left stick',v:'Flick \u25C0 \u25B6 to change tab'},
+ {t:'toggle',l:'Hint bar',k:'hints',h:'Show context tips at the bottom'}]};
+
+// ---------- UI canvas ----------
+const CW=1024,CH=640,cv=document.createElement('canvas');cv.width=CW;cv.height=CH;const g=cv.getContext('2d');
+let W=[],dirty=true,open=true,openT=0,grab=null,lastK=null,vig=0,AC=null,lastTheme=-1,objs=[];
+const lastStep={};
+function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();}
+function T(s,x,y,sz,c,al,wt){g.font=(wt||'500')+' '+sz+'px system-ui,sans-serif';g.fillStyle=c;g.textAlign=al||'left';g.textBaseline='middle';g.fillText(s,x,y);}
+const isHov=id=>all.some(s=>s.hov===id);
+function draw(){
+ const ac=TH[S.theme].a;W=[];g.clearRect(0,0,CW,CH);
+ rr(6,6,CW-12,CH-12,40);g.fillStyle='rgba(11,15,30,.97)';g.fill();g.lineWidth=3;g.strokeStyle=ac+'88';g.stroke();
+ T('VR MENU',36,58,26,ac,'left','800');
+ T(new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}),CW-100,58,24,'#9aa3c7','right','600');
+ rr(CW-84,46,44,22,6);g.lineWidth=2;g.strokeStyle='#9aa3c7';g.stroke();rr(CW-80,50,28,14,3);g.fillStyle='#6ee7a0';g.fill();
+ tabs.forEach((t,i)=>{const id='tab'+i,y=104+i*74,r=[28,y,180,62],hv=isHov(id),on=S.tab===i;W.push({id,t:'tab',i,r,h:'Open '+t[0]});
+  rr(r[0],r[1],r[2],r[3],18);g.fillStyle=on?ac+'33':hv?'rgba(255,255,255,.10)':'rgba(255,255,255,.03)';g.fill();
+  if(on){rr(28,y+14,6,34,3);g.fillStyle=ac;g.fill();}
+  T(t[1],62,y+32,28,on?ac:'#c8cde8','center');T(t[0],92,y+32,25,on?'#fff':'#c8cde8','left','600');});
+ {const r=[28,522,180,60],hv=isHov('close');W.push({id:'close',t:'btn',r,fn:toggle,h:'Hide the menu \u2014 press Y to bring it back'});
+  rr(r[0],r[1],r[2],r[3],18);g.fillStyle=hv?'rgba(255,90,110,.35)':'rgba(255,90,110,.16)';g.fill();T('Close',118,552,24,'#ffb3bd','center','700');}
+ T(tabs[S.tab][0],250,58,32,'#fff','left','700');
+ if(S.tab===0){
+  const tiles=[['\u2316','Recenter','Bring the menu to you',summon],['\u2726','Spawn object','Drop a shape into the world',spawn],['\u2715','Clear objects','Remove spawned shapes',clearObjs],['\u21BA','Reset settings','Restore all defaults',reset]];
+  tiles.forEach((t,i)=>{const id='tile'+i,x=250+(i%2)*379,y=104+Math.floor(i/2)*174,hv=isHov(id),p=hv?5:0,r=[x-p,y-p,355+2*p,150+2*p];
+   W.push({id,t:'btn',r,fn:t[3],h:t[2]});rr(r[0],r[1],r[2],r[3],26);g.fillStyle=hv?ac+'40':'rgba(255,255,255,.05)';g.fill();
+   g.lineWidth=2;g.strokeStyle=hv?ac:'rgba(255,255,255,.08)';g.stroke();
+   T(t[0],x+54,y+54,46,ac,'center');T(t[1],x+104,y+56,30,'#fff','left','700');T(t[2],x+28,y+112,21,'#9aa3c7');});
+  T('Objects in world: '+objs.length,250,470,22,'#9aa3c7');
+ } else rows[S.tab].forEach((r,i)=>{
+  const id='r'+S.tab+'_'+i,x=250,y=104+i*74,w=734,h=62,hv=isHov(id)&&r.t!=='info';
+  rr(x,y,w,h,18);g.fillStyle=hv?'rgba(255,255,255,.10)':'rgba(255,255,255,.04)';g.fill();T(r.l,x+22,y+32,25,'#e8ecff','left','600');
+  if(r.t==='info'){T(r.v,x+w-22,y+32,23,'#9aa3c7','right');return;}
+  if(r.t==='toggle'){W.push({id,t:'toggle',k:r.k,r:[x,y,w,h],h:r.h});const on=S[r.k],sx=x+w-22-84,sy=y+9;
+   rr(sx,sy,84,44,22);g.fillStyle=on?ac:'#3a4058';g.fill();g.beginPath();g.arc(sx+(on?62:22),sy+22,17,0,7);g.fillStyle='#fff';g.fill();}
+  if(r.t==='seg'){const n=r.o.length,sx=x+w-22-n*128;W.push({id,t:'seg',k:r.k,n,r:[sx,y+9,n*128,44],h:r.h});
+   rr(sx,y+9,n*128,44,22);g.fillStyle='rgba(255,255,255,.07)';g.fill();
+   r.o.forEach((o,j)=>{if(S[r.k]===j){rr(sx+j*128+3,y+12,122,38,19);g.fillStyle=ac;g.fill();}T(o,sx+j*128+64,y+32,22,S[r.k]===j?'#0b0f1e':'#c8cde8','center','700');});}
+  if(r.t==='slider'){const x0=x+300,x1=x+w-140,f=(S[r.k]-r.a)/(r.b-r.a);W.push({id,t:'slider',k:r.k,a:r.a,b:r.b,x0,x1,r:[x+280,y,w-280,h],h:r.h});
+   rr(x0,y+26,x1-x0,10,5);g.fillStyle='#3a4058';g.fill();rr(x0,y+26,(x1-x0)*f,10,5);g.fillStyle=ac;g.fill();
+   g.beginPath();g.arc(x0+(x1-x0)*f,y+31,hv?20:16,0,7);g.fillStyle='#fff';g.fill();T(r.f(S[r.k]),x+w-22,y+32,23,'#c8cde8','right','600');}
+ });
+ if(S.hints){const hw=W.find(w=>isHov(w.id));rr(250,524,734,56,28);g.fillStyle='rgba(255,255,255,.05)';g.fill();
+  T(hw?hw.h:'Trigger: select  \u00B7  Grip: move panel  \u00B7  Y: hide menu',617,553,21,hw?ac:'#8f98bd','center','600');}
+ tex.needsUpdate=true;
+}
+
+// ---------- Scene ----------
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x0d1024);scene.fog=new THREE.Fog(0x0d1024,8,40);
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.02,100);camera.position.set(0,1.6,0);
+const rig=new THREE.Group();rig.add(camera);scene.add(rig);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);
+renderer.xr.enabled=true;try{renderer.xr.setReferenceSpaceType('local-floor');}catch(e){}document.body.prepend(renderer.domElement);
+const hemi=new THREE.HemisphereLight(0xffffff,0x445577,.9),dl=new THREE.DirectionalLight(0xffffff,.6);dl.position.set(3,6,2);scene.add(hemi,dl);
+let grid;function mkGrid(){if(grid){scene.remove(grid);grid.geometry.dispose();}grid=new THREE.GridHelper(60,120,TH[S.theme].e,S.theme===2?0x6a8aa8:0x1a2040);grid.material.transparent=true;grid.material.opacity=.55;scene.add(grid);}
+const pillars=[];for(let i=0;i<18;i++){const a=i/18*6.283,r=6+Math.random()*3,h=1+Math.random()*4,m=new THREE.Mesh(new THREE.BoxGeometry(.5,h,.5),new THREE.MeshStandardMaterial({color:0x1a2038,emissive:0x3548ff,emissiveIntensity:.35}));m.position.set(Math.sin(a)*r,h/2,Math.cos(a)*r);scene.add(m);pillars.push(m);}
+const sp=[];for(let i=0;i<500;i++){const v=new THREE.Vector3().randomDirection().multiplyScalar(45);if(v.y<0)v.y=-v.y*.3;sp.push(v);}
+const stars=new THREE.Points(new THREE.BufferGeometry().setFromPoints(sp),new THREE.PointsMaterial({color:0xffffff,size:.12,fog:false}));scene.add(stars);
+
+// curved menu panel
+const tex=new THREE.CanvasTexture(cv);tex.minFilter=THREE.LinearFilter;tex.generateMipmaps=false;tex.anisotropy=renderer.capabilities.getMaxAnisotropy();
+const panelMat=new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide,fog:false});
+const pg=new THREE.PlaneGeometry(1.2,.75,40,1),pp=pg.attributes.position,R=1.3;
+for(let i=0;i<pp.count;i++){const a=pp.getX(i)/R;pp.setX(i,R*Math.sin(a));pp.setZ(i,R*(1-Math.cos(a)));}
+pg.computeBoundingSphere();
+const panel=new THREE.Mesh(pg,panelMat),menu=new THREE.Group();menu.rotation.order='YXZ';menu.add(panel);scene.add(menu);menu.position.set(0,1.48,-1.1);
+
+// comfort vignette
+const vc=document.createElement('canvas');vc.width=vc.height=256;const vg=vc.getContext('2d'),gr=vg.createRadialGradient(128,128,40,128,128,128);
+gr.addColorStop(0,'rgba(0,0,0,0)');gr.addColorStop(.55,'rgba(0,0,0,0)');gr.addColorStop(.85,'rgba(0,0,0,1)');gr.addColorStop(1,'rgba(0,0,0,1)');vg.fillStyle=gr;vg.fillRect(0,0,256,256);
+const vigM=new THREE.Mesh(new THREE.PlaneGeometry(1.5,1.5),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(vc),transparent:true,opacity:0,depthTest:false,depthWrite:false,fog:false}));
+vigM.position.z=-.3;vigM.renderOrder=999;vigM.visible=false;camera.add(vigM);
+
+// ---------- Pointers ----------
+const beam=new THREE.CylinderGeometry(.0025,.0025,1,8);beam.rotateX(-Math.PI/2);beam.translate(0,0,-.5);
+function mkSt(extra){return Object.assign({c:null,src:null,hand:'',hov:null,down:false,drag:null,px:0,py:0,hit:null},extra);}
+const ctrls=[];
+for(let i=0;i<2;i++){const c=renderer.xr.getController(i);rig.add(c);const st=mkSt({c});
+ st.ray=new THREE.Mesh(beam,new THREE.MeshBasicMaterial({color:0x7c8cff,transparent:true,opacity:.85}));st.ray.visible=false;c.add(st.ray);
+ st.tip=new THREE.Mesh(new THREE.SphereGeometry(.014,16,12),new THREE.MeshBasicMaterial({color:0xffffff}));st.tip.visible=false;c.add(st.tip);
+ st.dot=new THREE.Mesh(new THREE.SphereGeometry(.008,12,8),new THREE.MeshBasicMaterial({color:0xffffff}));st.dot.visible=false;scene.add(st.dot);
+ c.addEventListener('connected',e=>{st.src=e.data;st.hand=e.data.handedness;st.tip.visible=true;});
+ c.addEventListener('disconnected',()=>{st.src=null;st.tip.visible=false;});
+ c.addEventListener('selectstart',()=>down(st));c.addEventListener('selectend',()=>up(st));
+ c.addEventListener('squeezestart',()=>sqz(st));c.addEventListener('squeezeend',()=>rel(st));
+ ctrls.push(st);}
+const ms=mkSt({mouse:true}),all=[...ctrls,ms],ndc=new THREE.Vector2(),rc=new THREE.Raycaster(),m4=new THREE.Matrix4();
+const v1=new THREE.Vector3(),v2=new THREE.Vector3(),v3=new THREE.Vector3();
+function setRay(st){if(st.mouse)rc.setFromCamera(ndc,camera);else{m4.identity().extractRotation(st.c.matrixWorld);rc.ray.origin.setFromMatrixPosition(st.c.matrixWorld);rc.ray.direction.set(0,0,-1).applyMatrix4(m4);}}
+function hit(px,py){return W.find(w=>px>=w.r[0]&&px<=w.r[0]+w.r[2]&&py>=w.r[1]&&py<=w.r[1]+w.r[3]);}
+
+// ---------- Feedback ----------
+function beep(f,d,v,type){if(!S.ui||!AC)return;try{const o=AC.createOscillator(),gn=AC.createGain(),t=AC.currentTime;o.type=type||'sine';o.frequency.value=f;gn.gain.setValueAtTime(Math.max(1e-4,(v||.2)*S.master),t);gn.gain.exponentialRampToValueAtTime(1e-4,t+d);o.connect(gn);gn.connect(AC.destination);o.start();o.stop(t+d);}catch(e){}}
+function buzz(st,a,ms){if(!S.hap||!st||!st.src||!st.src.gamepad)return;try{const h=st.src.gamepad.hapticActuators&&st.src.gamepad.hapticActuators[0];if(h&&h.pulse)h.pulse(Math.min(1,a*S.hapStr*1.6),ms);}catch(e){}}
+
+// ---------- Actions ----------
+function setSl(w,px){const f=Math.max(0,Math.min(1,(px-w.x0)/(w.x1-w.x0))),v=w.a+f*(w.b-w.a);
+ if(Math.abs(v-S[w.k])>1e-3){S[w.k]=v;const s=Math.round(f*20);if(lastStep[w.k]!==s){lastStep[w.k]=s;beep(450+f*800,.03,.07);lastK&&buzz(lastK,.25,8);}apply();}}
+function act(w,px){switch(w.t){
+ case 'tab':S.tab=w.i;beep(1000,.06);break;
+ case 'toggle':S[w.k]=!S[w.k];beep(S[w.k]?950:600,.08);break;
+ case 'seg':S[w.k]=Math.max(0,Math.min(w.n-1,Math.floor((px-w.r[0])/128)));beep(800,.06);break;
+ case 'slider':setSl(w,px);break;
+ default:beep(720,.09,.2,'triangle');w.fn&&w.fn();}
+ apply();}
+function down(st){if(!open||openT<.6||!st.hov)return;const w=W.find(x=>x.id===st.hov);if(!w)return;st.down=true;lastK=st;if(w.t==='slider')st.drag=w.id;act(w,st.px);buzz(st,.6,25);dirty=true;}
+function up(st){st.down=false;st.drag=null;dirty=true;}
+function sqz(st){if(!open||!st.hit)return;grab=st;st.c.attach(menu);buzz(st,.5,30);}
+function rel(st){if(!grab||(st&&grab!==st))return;scene.attach(menu);const e=new THREE.Euler().setFromQuaternion(menu.quaternion,'YXZ');menu.rotation.set(-.12,e.y,0);grab=null;}
+function summon(){rel(null);camera.getWorldPosition(v1);camera.getWorldDirection(v2);v2.y=0;if(v2.lengthSq()<1e-4)v2.set(0,0,-1);v2.normalize();
+ menu.position.copy(v1).addScaledVector(v2,S.dist);menu.position.y=v1.y-.12;menu.rotation.set(-.12,Math.atan2(v1.x-menu.position.x,v1.z-menu.position.z),0);}
+function toggle(){open=!open;if(open)summon();beep(open?880:520,.1);ctrls.forEach(s=>buzz(s,.4,20));dirty=true;}
+const geos=[new THREE.BoxGeometry(.25,.25,.25),new THREE.IcosahedronGeometry(.17),new THREE.TorusGeometry(.14,.05,12,24),new THREE.SphereGeometry(.16,20,14),new THREE.OctahedronGeometry(.19)];
+function spawn(){const st=lastK||ctrls[1];setRay(st);const p=rc.ray.origin.clone().addScaledVector(rc.ray.direction,1.8);p.y=Math.max(p.y,.5);p.x+=(Math.random()-.5)*.3;
+ const m=new THREE.Mesh(geos[Math.random()*geos.length|0],new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(Math.random(),.7,.55),roughness:.35,metalness:.2}));
+ m.position.copy(p);m.scale.setScalar(.01);scene.add(m);objs.push({m,t:0,y:p.y,ph:Math.random()*6,s:.5+Math.random()});if(objs.length>40)scene.remove(objs.shift().m);}
+function clearObjs(){objs.forEach(o=>scene.remove(o.m));objs=[];}
+function reset(){const t=S.tab;Object.assign(S,DEF,{tab:t});}
+let lastDist=S.dist;
+function apply(){const th=TH[S.theme];scene.background.setHex(th.bg);scene.fog.color.setHex(th.bg);hemi.intensity=S.bright*.9;dl.intensity=S.bright*.6;
+ if(lastTheme!==S.theme){lastTheme=S.theme;mkGrid();pillars.forEach(p=>p.material.emissive.setHex(th.e));stars.visible=S.theme!==2;}
+ all.forEach(s=>{if(s.ray){s.ray.material.color.set(th.a);}if(s.dot)s.dot.material.color.set(th.a);});
+ document.documentElement.style.setProperty('--ac',th.a);
+ if(lastDist!==S.dist){lastDist=S.dist;if(!grab){camera.getWorldPosition(v1);v2.copy(menu.position).sub(v1);v2.y=0;v2.normalize();menu.position.x=v1.x+v2.x*S.dist;menu.position.z=v1.z+v2.z*S.dist;}}
+ dirty=true;}
+
+// ---------- Input polling ----------
+function pr(st,k,p,fn){if(p&&!st['p'+k])fn();st['p'+k]=!!p;}
+function rotRig(a){camera.getWorldPosition(v1);rig.rotation.y+=a;camera.getWorldPosition(v3);rig.position.x+=v1.x-v3.x;rig.position.z+=v1.z-v3.z;}
+function poll(dt){ctrls.forEach(st=>{const gp=st.src&&st.src.gamepad;if(!gp)return;const b=gp.buttons,x=gp.axes.length>2?gp.axes[2]:0;
+ if(st.hand==='left'){pr(st,'y',b[5]&&b[5].pressed,toggle);pr(st,'x',b[4]&&b[4].pressed,()=>{if(open){summon();beep(700,.08);}});
+  if(open){if(Math.abs(x)>.7&&!st.fl){st.fl=1;S.tab=(S.tab+(x>0?1:4))%5;beep(900,.05);buzz(st,.3,12);dirty=true;}else if(Math.abs(x)<.4)st.fl=0;}}
+ else if(st.hand==='right'){
+  if(S.turn===1){if(Math.abs(x)>.15){rotRig(-x*dt*1.9);vig=Math.max(vig,Math.min(1,Math.abs(x)));}}
+  else{if(Math.abs(x)>.7&&!st.sn){st.sn=1;rotRig(-Math.sign(x)*SN[S.snap]*Math.PI/180);vig=.9;buzz(st,.3,10);}else if(Math.abs(x)<.4)st.sn=0;}}});}
+function pointer(st){
+ if(!st.mouse&&!st.src){st.hov=null;st.hit=null;st.ray.visible=st.dot.visible=false;return;}
+ setRay(st);st.hit=null;let hv=null;
+ if(menu.visible&&openT>.6){const h=rc.intersectObject(panel,false)[0];if(h&&h.uv){st.hit=h;st.px=h.uv.x*CW;st.py=(1-h.uv.y)*CH;const w=hit(st.px,st.py);hv=w?w.id:null;}}
+ if(st.drag&&st.hit){const w=W.find(x=>x.id===st.drag);if(w)setSl(w,st.px);}
+ if(hv!==st.hov){st.hov=hv;if(hv&&!st.drag){beep(1400,.025,.06);buzz(st,.2,8);}dirty=true;}
+ if(!st.mouse){const show=menu.visible&&openT>.3&&(S.hand===0||(S.hand===1&&st.hand==='right')||(S.hand===2&&st.hand==='left'));
+  st.ray.visible=show;if(show)st.ray.scale.z=st.hit?st.hit.distance:.9;
+  st.dot.visible=!!(show&&st.hit);if(st.hit){st.dot.position.copy(st.hit.point);st.dot.scale.setScalar(st.down?.7:(hv?1.5:1));}}}
+
+// ---------- Desktop preview + start ----------
+const cvs=renderer.domElement;
+cvs.addEventListener('pointermove',e=>ndc.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1));
+cvs.addEventListener('pointerdown',e=>{AC=AC||new (window.AudioContext||window.webkitAudioContext)();ndc.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);pointer(ms);down(ms);});
+addEventListener('pointerup',()=>up(ms));
+addEventListener('keydown',e=>{if(e.key==='m')toggle();});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+const btn=document.getElementById('enter');
+const note=document.getElementById('note');
+if(window.self!==window.top)note.textContent='This page is inside an embedded frame, which usually blocks VR. Open the link directly in the Quest browser, or host the file yourself.';
+if(!navigator.xr){note.textContent='WebXR is not available in this browser or frame.';}
+else navigator.xr.isSessionSupported('immersive-vr').then(ok=>{if(!ok)note.textContent='This browser reports immersive VR as unsupported here.';}).catch(e=>{note.textContent='VR check failed: '+e.message;});
+btn.onclick=async()=>{try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();}catch(e){}
+ if(!navigator.xr){note.textContent='WebXR is not available here. Try opening the page directly in the Quest browser.';return;}
+ let s=null;
+ try{s=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor']});}
+ catch(e){try{s=await navigator.xr.requestSession('immersive-vr');}catch(e2){note.textContent='Could not start VR: '+(e2.message||e2.name);return;}}
+ try{await renderer.xr.setSession(s);}catch(e){note.textContent='Session error: '+e.message;return;}
+ btn.parentElement.style.display='none';s.addEventListener('end',()=>{btn.parentElement.style.display='';});setTimeout(()=>{summon();dirty=true;},800);};
+
+// ---------- Loop ----------
+const clock=new THREE.Clock();apply();setInterval(()=>dirty=true,15000);
+renderer.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+ vig=Math.max(0,vig-dt*3);poll(dt);
+ openT+=((open?1:0)-openT)*Math.min(1,dt*12);menu.visible=openT>.01;menu.scale.setScalar(S.size*(.88+.12*openT));panelMat.opacity=S.opac*openT;
+ scene.updateMatrixWorld(true);
+ if(!renderer.xr.isPresenting)pointer(ms);else{ms.hov=null;}
+ ctrls.forEach(pointer);
+ objs.forEach(o=>{o.t=Math.min(1,o.t+dt*3);o.m.scale.setScalar(o.t*o.t*(3-2*o.t));o.m.rotation.x+=o.s*dt;o.m.rotation.y+=o.s*.7*dt;o.m.position.y=o.y+Math.sin(t+o.ph)*.05;});
+ vigM.material.opacity=S.vig?vig*.9:0;vigM.visible=vigM.material.opacity>.01;
+ if(dirty){draw();dirty=false;}
+ renderer.render(scene,camera);});
+</script></body></html>
